@@ -7,6 +7,7 @@ local RescueService = require(script.Parent:WaitForChild("RescueService"))
 local DisasterService = require(script.Parent:WaitForChild("DisasterService"))
 local PlayerDataService = require(script.Parent:WaitForChild("PlayerDataService"))
 local BaseService = require(script.Parent:WaitForChild("BaseService"))
+local MapLoaderService = require(script.Parent:WaitForChild("MapLoaderService"))
 
 local RoundService = {}
 
@@ -54,6 +55,7 @@ function RoundService.Start()
 	RoundService._running = true
 	local stateFolder = getOrCreateStateFolder()
 	RescueService.EnsureZones()
+	MapLoaderService.Init()
 
 	task.spawn(function()
 		while RoundService._running do
@@ -67,9 +69,11 @@ function RoundService.Start()
 
 			print("Round start")
 			setPhase(stateFolder, "ActiveRound")
-			BrainrotService.SpawnBrainrots()
 			local disaster = DisasterService.StartDisaster(Config.RoundDurationSeconds)
 			setDisasterName(stateFolder, disaster and disaster.displayName or "Unknown")
+			MapLoaderService.LoadDisasterMap(disaster and disaster.id or nil)
+			local spawnMarkers = MapLoaderService.GetBrainrotSpawnMarkers()
+			BrainrotService.SpawnBrainrots(spawnMarkers)
 
 			for t = Config.RoundDurationSeconds, 0, -1 do
 				setTimeLeft(stateFolder, t)
@@ -82,6 +86,7 @@ function RoundService.Start()
 			setDisasterName(stateFolder, "None")
 			CarryService.ClearAll()
 			BrainrotService.ClearBrainrots()
+			MapLoaderService.ClearActiveMap()
 			PlayerDataService.CommitRoundRescues()
 			BaseService.RefreshAllBases()
 		end

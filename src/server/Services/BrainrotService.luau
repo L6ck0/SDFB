@@ -11,22 +11,29 @@ local rarityColors = {
 	Secret = Color3.fromRGB(255, 255, 255),
 }
 
-local function rollRarity()
+local function rollFromWeights(weights)
 	local totalWeight = 0
 	for _, rarity in ipairs(Config.RarityOrder) do
-		totalWeight += Config.RaritySpawnWeights[rarity] or 0
+		totalWeight += weights[rarity] or 0
+	end
+	if totalWeight <= 0 then
+		return "Common"
 	end
 
 	local roll = math.random() * totalWeight
 	local cursor = 0
 	for _, rarity in ipairs(Config.RarityOrder) do
-		cursor += Config.RaritySpawnWeights[rarity] or 0
+		cursor += weights[rarity] or 0
 		if roll <= cursor then
 			return rarity
 		end
 	end
 
 	return "Common"
+end
+
+local function defaultRarityWeights()
+	return Config.RaritySpawnWeights
 end
 
 local function chooseBrainrotName(rarity)
@@ -37,6 +44,58 @@ local function chooseBrainrotName(rarity)
 	return pool[math.random(1, #pool)]
 end
 
+local function getSpawnProfileName(marker)
+	local explicit = marker:GetAttribute("SpawnProfile")
+	if type(explicit) == "string" and explicit ~= "" then
+		return explicit
+	end
+
+	local name = marker.Name
+	local prefix = "BrainrotSpawn_"
+	if string.sub(name, 1, #prefix) ~= prefix then
+		return "Any"
+	end
+	local suffix = string.sub(name, #prefix + 1)
+	local profile = string.match(suffix, "^[^_]+")
+	return profile or "Any"
+end
+
+local function parseAllowedRarities(marker)
+	local raw = marker:GetAttribute("AllowedRarities")
+	if type(raw) ~= "string" or raw == "" then
+		return nil
+	end
+
+	local allowed = {}
+	for token in string.gmatch(raw, "[^,]+") do
+		local trimmed = string.gsub(token, "^%s*(.-)%s*$", "%1")
+		if trimmed ~= "" then
+			allowed[trimmed] = true
+		end
+	end
+	return allowed
+end
+
+local function getRarityWeightsForMarker(marker)
+	local profileName = getSpawnProfileName(marker)
+	local profileWeights = Config.SpawnProfiles[profileName] or Config.SpawnProfiles.Any or defaultRarityWeights()
+	local allowed = parseAllowedRarities(marker)
+
+	local out = {}
+	for _, rarity in ipairs(Config.RarityOrder) do
+		local weight = profileWeights[rarity] or 0
+		local override = marker:GetAttribute("RarityWeight_" .. rarity)
+		if type(override) == "number" then
+			weight = override
+		end
+		if allowed and not allowed[rarity] then
+			weight = 0
+		end
+		out[rarity] = math.max(0, weight)
+	end
+	return out
+end
+
 local function getOrCreateFolder()
 	local folder = Workspace:FindFirstChild("Brainrots")
 	if not folder then
@@ -45,6 +104,60 @@ local function getOrCreateFolder()
 		folder.Parent = Workspace
 	end
 	return folder
+end
+
+local function chooseSpawnMarker(markers)
+	local total = 0
+	local weighted = {}
+	for _, marker in ipairs(markers) do
+		if marker:IsA("BasePart") then
+			local area = math.max(1, marker.Size.X * marker.Size.Z)
+			local multiplier = marker:GetAttribute("SpawnWeight")
+			if type(multiplier) ~= "number" then
+				multiplier = 1
+			end
+			local weight = area * math.max(0, multiplier)
+			if weight > 0 then
+				total += weight
+				weighted[#weighted + 1] = { marker = marker, weight = weight }
+			end
+		end
+	end
+
+	if total <= 0 then
+		return nil
+	end
+
+	local roll = math.random() * total
+	local cursor = 0
+	for _, node in ipairs(weighted) do
+		cursor += node.weight
+		if roll <= cursor then
+			return node.marker
+		end
+	end
+
+	return weighted[#weighted].marker
+end
+
+local function getRandomPointOnMarker(marker)
+	local halfX = marker.Size.X * 0.5
+	local halfZ = marker.Size.Z * 0.5
+	local localOffset = Vector3.new(
+		math.random() * marker.Size.X - halfX,
+		(marker.Size.Y * 0.5) + 1.2,
+		math.random() * marker.Size.Z - halfZ
+	)
+	return (marker.CFrame * CFrame.new(localOffset)).Position
+end
+
+local function isFarEnough(position, existingPositions, minDistance)
+	for _, other in ipairs(existingPositions) do
+		if (other - position).Magnitude < minDistance then
+			return false
+		end
+	end
+	return true
 end
 
 local function addWorldLabel(part, brainrotName, incomePerSecond)
@@ -86,11 +199,61 @@ function BrainrotService.ClearBrainrots()
 	end
 end
 
-function BrainrotService.SpawnBrainrots()
+function BrainrotService.SpawnBrainrots(spawnMarkers)
 	BrainrotService.ClearBrainrots()
 	local folder = getOrCreateFolder()
+	local useMarkers = spawnMarkers and #spawnMarkers > 0
+	local placedPositions = {}
+
 	for i = 1, Config.BrainrotSpawnCount do
-		local rarity = rollRarity()
+		local chosenMarker = nil
+		local chosenPosition = nil
+		local rarityWeights = defaultRarityWeights()
+
+		for attempt = 1, Config.BrainrotSpawnMaxAttempts do
+			local marker = nil
+			local candidatePosition
+
+			if useMarkers then
+				marker = chooseSpawnMarker(spawnMarkers)
+				if marker then
+					candidatePosition = getRandomPointOnMarker(marker)
+				end
+			end
+
+			if not candidatePosition then
+				candidatePosition = Vector3.new(
+					math.random(-Config.BrainrotSpawnRadius, Config.BrainrotSpawnRadius),
+					5,
+					math.random(-Config.BrainrotSpawnRadius, Config.BrainrotSpawnRadius)
+				)
+			end
+
+			if isFarEnough(candidatePosition, placedPositions, Config.BrainrotMinSpawnSpacing) then
+				chosenMarker = marker
+				chosenPosition = candidatePosition
+				break
+			end
+		end
+
+		if not chosenPosition then
+			if useMarkers then
+				chosenMarker = chooseSpawnMarker(spawnMarkers)
+				chosenPosition = chosenMarker and getRandomPointOnMarker(chosenMarker) or Vector3.new(0, 5, 0)
+			else
+				chosenPosition = Vector3.new(
+					math.random(-Config.BrainrotSpawnRadius, Config.BrainrotSpawnRadius),
+					5,
+					math.random(-Config.BrainrotSpawnRadius, Config.BrainrotSpawnRadius)
+				)
+			end
+		end
+
+		if chosenMarker then
+			rarityWeights = getRarityWeightsForMarker(chosenMarker)
+		end
+
+		local rarity = rollFromWeights(rarityWeights)
 		local brainrotName = chooseBrainrotName(rarity)
 		local incomePerSecond = Config.RarityIncomePerSecond[rarity] or 0
 		local part = Instance.new("Part")
@@ -98,11 +261,7 @@ function BrainrotService.SpawnBrainrots()
 		part.Size = Vector3.new(2, 2, 2)
 		part.Anchored = true
 		part.Color = rarityColors[rarity] or rarityColors.Common
-		part.Position = Vector3.new(
-			math.random(-Config.BrainrotSpawnRadius, Config.BrainrotSpawnRadius),
-			5,
-			math.random(-Config.BrainrotSpawnRadius, Config.BrainrotSpawnRadius)
-		)
+		part.Position = chosenPosition
 		part:SetAttribute("Rarity", rarity)
 		part:SetAttribute("BrainrotName", brainrotName)
 		part:SetAttribute("IncomePerSecond", incomePerSecond)
@@ -115,6 +274,8 @@ function BrainrotService.SpawnBrainrots()
 			local CarryService = require(script.Parent:WaitForChild("CarryService"))
 			CarryService.Pickup(player, part)
 		end)
+
+		table.insert(placedPositions, chosenPosition)
 	end
 end
 

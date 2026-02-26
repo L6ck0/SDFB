@@ -1,6 +1,7 @@
 local Players = game:GetService("Players")
 local ReplicatedStorage = game:GetService("ReplicatedStorage")
 local UserInputService = game:GetService("UserInputService")
+local Workspace = game:GetService("Workspace")
 
 local player = Players.LocalPlayer
 local Config = require(ReplicatedStorage:WaitForChild("Shared"):WaitForChild("Config"):WaitForChild("Config"))
@@ -171,6 +172,7 @@ local remotes = ReplicatedStorage:WaitForChild("Remotes")
 local deleteEvent = remotes:WaitForChild("DeleteBrainrot")
 local baseFullNoticeEvent = remotes:WaitForChild("BaseFullNotice")
 local showDeleteConfirmEvent = remotes:WaitForChild("ShowDeleteConfirm")
+local noBaseNoticeEvent = remotes:WaitForChild("NoBaseNotice")
 
 local stateFolder = ReplicatedStorage:WaitForChild("RoundState")
 local phase = stateFolder:WaitForChild("Phase")
@@ -187,6 +189,8 @@ local rowById = {}
 local warningToken = 0
 local pendingDeleteId = nil
 local activePanel = "none"
+local panelBeforeConfirm = "none"
+local setMenuVisible
 
 local function updateRoundLabel()
 	roundLabel.Text = string.format("%s | %ds", phase.Value, timeLeft.Value)
@@ -217,6 +221,19 @@ hintLabel.TextSize = 18
 hintLabel.Font = Enum.Font.GothamBold
 hintLabel.Text = "Find a green CLAIM BASE marker and press E to claim your base."
 hintLabel.Parent = screenGui
+
+local claimRequiredLabel = Instance.new("TextLabel")
+claimRequiredLabel.Name = "ClaimRequiredLabel"
+claimRequiredLabel.Size = UDim2.new(1, -20, 0, 56)
+claimRequiredLabel.Position = UDim2.fromOffset(10, 88)
+claimRequiredLabel.BackgroundTransparency = 1
+claimRequiredLabel.TextColor3 = Color3.fromRGB(255, 220, 160)
+claimRequiredLabel.TextSize = 18
+claimRequiredLabel.Font = Enum.Font.GothamBold
+claimRequiredLabel.TextWrapped = true
+claimRequiredLabel.Visible = false
+claimRequiredLabel.Text = "Claim a base first to store, compare, and manage brainrots."
+claimRequiredLabel.Parent = menuFrame
 
 local function showWarning(text)
 	warningToken += 1
@@ -284,15 +301,44 @@ confirmNo.Font = Enum.Font.GothamBold
 confirmNo.Text = "Cancel"
 confirmNo.Parent = confirmFrame
 
-local function closeDeleteConfirm()
+local function reopenPanel(panelName)
+	if panelName == "base" then
+		setMenuVisible(true)
+	elseif panelName == "shop" then
+		shopFrame.Visible = true
+		activePanel = "shop"
+	elseif panelName == "rebirth" then
+		rebirthFrame.Visible = true
+		activePanel = "rebirth"
+	elseif panelName == "settings" then
+		settingsFrame.Visible = true
+		activePanel = "settings"
+	end
+end
+
+local function closeDeleteConfirm(restorePrevious)
 	pendingDeleteId = nil
 	confirmFrame.Visible = false
 	if activePanel == "confirm" then
 		activePanel = "none"
 	end
+	local previous = panelBeforeConfirm
+	panelBeforeConfirm = "none"
+	if restorePrevious and previous ~= "none" then
+		reopenPanel(previous)
+	end
 end
 
 local function openDeleteConfirm(brainrotId, brainrotName, source)
+	local previous = activePanel
+	if previous == "confirm" then
+		previous = panelBeforeConfirm
+	end
+	if previous == nil then
+		previous = "none"
+	end
+	panelBeforeConfirm = previous
+
 	menuFrame.Visible = false
 	shopFrame.Visible = false
 	rebirthFrame.Visible = false
@@ -308,11 +354,11 @@ confirmYes.MouseButton1Click:Connect(function()
 	if pendingDeleteId then
 		deleteEvent:FireServer(pendingDeleteId)
 	end
-	closeDeleteConfirm()
+	closeDeleteConfirm(true)
 end)
 
 confirmNo.MouseButton1Click:Connect(function()
-	closeDeleteConfirm()
+	closeDeleteConfirm(true)
 end)
 
 local function updateDisasterLabel()
@@ -320,6 +366,13 @@ local function updateDisasterLabel()
 end
 
 local function updateSummary()
+	if player:GetAttribute("HasClaimedBase") ~= true then
+		cashLine.Text = "No base claimed yet."
+		scroll.Visible = false
+		claimRequiredLabel.Visible = true
+		return
+	end
+
 	local total = 0
 	for _, child in ipairs(baseBrainrots:GetChildren()) do
 		if child:IsA("StringValue") then
@@ -327,6 +380,26 @@ local function updateSummary()
 		end
 	end
 	cashLine.Text = string.format("Cash: %d | Income: %.1f/s | In Base: %d/%d", cash.Value, cashPerSecond.Value, total, Config.BaseCapacity)
+	scroll.Visible = true
+	claimRequiredLabel.Visible = false
+end
+
+local function updateClaimVisuals()
+	local hasBase = player:GetAttribute("HasClaimedBase") == true
+	local basesFolder = Workspace:FindFirstChild("PlayerBases")
+	if not basesFolder then
+		return
+	end
+
+	for _, descendant in ipairs(basesFolder:GetDescendants()) do
+		if descendant:IsA("ProximityPrompt") and descendant.Name == "ClaimPrompt" then
+			descendant.Enabled = not hasBase
+		elseif descendant:IsA("Part") and descendant.Name == "ClaimMarker" then
+			descendant.LocalTransparencyModifier = hasBase and 1 or 0
+		elseif descendant:IsA("BillboardGui") and descendant.Name == "MarkerBillboard" then
+			descendant.Enabled = not hasBase
+		end
+	end
 end
 
 local function updateCanvasSize()
@@ -385,6 +458,11 @@ end
 
 local function rebuildRows()
 	clearRows()
+	if player:GetAttribute("HasClaimedBase") ~= true then
+		updateSummary()
+		updateCanvasSize()
+		return
+	end
 
 	local items = {}
 	for _, child in ipairs(baseBrainrots:GetChildren()) do
@@ -407,7 +485,7 @@ local function rebuildRows()
 	updateCanvasSize()
 end
 
-local function setMenuVisible(visible)
+function setMenuVisible(visible)
 	menuFrame.Visible = visible
 	if visible then
 		activePanel = "base"
@@ -422,7 +500,7 @@ local function hideAllPanels()
 	shopFrame.Visible = false
 	rebirthFrame.Visible = false
 	settingsFrame.Visible = false
-	closeDeleteConfirm()
+	closeDeleteConfirm(false)
 	activePanel = "none"
 end
 
@@ -497,10 +575,25 @@ listLayout:GetPropertyChangedSignal("AbsoluteContentSize"):Connect(updateCanvasS
 baseFullNoticeEvent.OnClientEvent:Connect(function()
 	showWarning("Your base is full. Delete a brainrot first.")
 end)
+noBaseNoticeEvent.OnClientEvent:Connect(function()
+	showWarning("First claim a base before picking up brainrots.")
+end)
 showDeleteConfirmEvent.OnClientEvent:Connect(function(brainrotId, brainrotName, source)
 	openDeleteConfirm(brainrotId, brainrotName, source)
+end)
+player:GetAttributeChangedSignal("HasClaimedBase"):Connect(function()
+	updateSummary()
+	rebuildRows()
+	updateClaimVisuals()
+end)
+
+Workspace.DescendantAdded:Connect(function(descendant)
+	if descendant.Name == "ClaimPrompt" or descendant.Name == "ClaimMarker" or descendant.Name == "MarkerBillboard" then
+		task.defer(updateClaimVisuals)
+	end
 end)
 
 updateRoundLabel()
 updateDisasterLabel()
 rebuildRows()
+updateClaimVisuals()

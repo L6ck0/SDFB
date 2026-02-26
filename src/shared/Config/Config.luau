@@ -8,6 +8,8 @@ Config.BrainrotCarrySpeedMultiplier = 0.8
 Config.SharedPromptHoldSeconds = 0.45
 Config.BrainrotPickupCooldownSeconds = 0.35
 Config.BrainrotPickupDistance = 5
+Config.BrainrotMinSpawnSpacing = 4
+Config.BrainrotSpawnMaxAttempts = 18
 Config.EconomyTickSeconds = 1
 Config.BaseCapacity = 8
 Config.WorldLabelMaxDistance = 45
@@ -20,6 +22,36 @@ Config.RaritySpawnWeights = {
 	Epic = 7,
 	Mythic = 2.5,
 	Secret = 0.5,
+}
+Config.SpawnProfiles = {
+	Any = {
+		Common = 70,
+		Rare = 20,
+		Epic = 7,
+		Mythic = 2.5,
+		Secret = 0.5,
+	},
+	Ground = {
+		Common = 75,
+		Rare = 18,
+		Epic = 5,
+		Mythic = 1.8,
+		Secret = 0.2,
+	},
+	High = {
+		Common = 45,
+		Rare = 28,
+		Epic = 17,
+		Mythic = 8,
+		Secret = 2,
+	},
+	SecretOnly = {
+		Common = 0,
+		Rare = 0,
+		Epic = 0,
+		Mythic = 0,
+		Secret = 100,
+	},
 }
 Config.RarityIncomePerSecond = {
 	Common = 1,

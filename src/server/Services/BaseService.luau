@@ -179,7 +179,7 @@ local function createPlot(name, position, parent)
 	claimPrompt.ActionText = "Claim"
 	claimPrompt.ObjectText = "Base Plot"
 	claimPrompt.HoldDuration = Config.SharedPromptHoldSeconds
-	claimPrompt.MaxActivationDistance = 28
+	claimPrompt.MaxActivationDistance = 12
 	claimPrompt.RequiresLineOfSight = false
 	claimPrompt.Style = Enum.ProximityPromptStyle.Default
 	claimPrompt.Parent = pad
@@ -264,6 +264,7 @@ function BaseService.AssignPlot(player, targetPlot)
 	setPlotLabel(plot, player.Name .. "'s Base")
 	setClaimPromptEnabled(plot, false)
 	plotsByPlayer[player] = plot
+	player:SetAttribute("HasClaimedBase", true)
 	BaseService.RefreshPlayerBase(player)
 	return plot
 end
@@ -282,6 +283,7 @@ function BaseService.ReleasePlot(player)
 		display:ClearAllChildren()
 	end
 	plotsByPlayer[player] = nil
+	player:SetAttribute("HasClaimedBase", false)
 end
 
 function BaseService.RefreshPlayerBase(player)
@@ -383,6 +385,7 @@ function BaseService.Init()
 	local lobbySpawn = getOrCreateLobbySpawn()
 
 	Players.PlayerAdded:Connect(function(player)
+		player:SetAttribute("HasClaimedBase", false)
 		player.CharacterAdded:Connect(function(character)
 			task.defer(function()
 				local playerPlot = plotsByPlayer[player]
@@ -397,6 +400,9 @@ function BaseService.Init()
 	end)
 
 	for _, player in Players:GetPlayers() do
+		if player:GetAttribute("HasClaimedBase") == nil then
+			player:SetAttribute("HasClaimedBase", false)
+		end
 		player.CharacterAdded:Connect(function(character)
 			task.defer(function()
 				local playerPlot = plotsByPlayer[player]

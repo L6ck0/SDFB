@@ -37,9 +37,21 @@ local function getOrCreateShowDeleteConfirmEvent()
 	return showConfirmEvent
 end
 
+local function getOrCreateNoBaseNoticeEvent()
+	local remotes = getOrCreateRemotesFolder()
+	local noBaseEvent = remotes:FindFirstChild("NoBaseNotice")
+	if not noBaseEvent then
+		noBaseEvent = Instance.new("RemoteEvent")
+		noBaseEvent.Name = "NoBaseNotice"
+		noBaseEvent.Parent = remotes
+	end
+	return noBaseEvent
+end
+
 function InventoryService.Init()
 	local deleteEvent = getOrCreateDeleteEvent()
 	getOrCreateShowDeleteConfirmEvent()
+	getOrCreateNoBaseNoticeEvent()
 	deleteEvent.OnServerEvent:Connect(function(player, brainrotId)
 		local ok = PlayerDataService.DeleteOwnedBrainrotById(player, brainrotId)
 		if ok then

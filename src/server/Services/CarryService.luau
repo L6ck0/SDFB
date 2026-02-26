@@ -1,5 +1,6 @@
 local Players = game:GetService("Players")
 local Workspace = game:GetService("Workspace")
+local ReplicatedStorage = game:GetService("ReplicatedStorage")
 local Config = require(game:GetService("ReplicatedStorage"):WaitForChild("Shared"):WaitForChild("Config"):WaitForChild("Config"))
 
 local CarryService = {}
@@ -7,6 +8,26 @@ local CarryService = {}
 local carriedByPlayer = {}
 local baseSpeedByPlayer = {}
 local lastPickupAtByPlayer = {}
+local lastNoBaseNoticeAtByPlayer = {}
+
+local function getOrCreateNoBaseNoticeEvent()
+	local remotes = ReplicatedStorage:FindFirstChild("Remotes")
+	if not remotes then
+		remotes = Instance.new("Folder")
+		remotes.Name = "Remotes"
+		remotes.Parent = ReplicatedStorage
+	end
+
+	local event = remotes:FindFirstChild("NoBaseNotice")
+	if not event then
+		event = Instance.new("RemoteEvent")
+		event.Name = "NoBaseNotice"
+		event.Parent = remotes
+	end
+	return event
+end
+
+local noBaseNoticeEvent = getOrCreateNoBaseNoticeEvent()
 
 local function getRootPosition(player)
 	local character = player.Character
@@ -117,6 +138,15 @@ function CarryService.Pickup(player, brainrot)
 	if not player or not brainrot then
 		return false
 	end
+	if player:GetAttribute("HasClaimedBase") ~= true then
+		local nowNotice = os.clock()
+		local lastNotice = lastNoBaseNoticeAtByPlayer[player] or 0
+		if (nowNotice - lastNotice) >= 1.5 then
+			noBaseNoticeEvent:FireClient(player)
+			lastNoBaseNoticeAtByPlayer[player] = nowNotice
+		end
+		return false
+	end
 
 	local now = os.clock()
 	local lastPickupAt = lastPickupAtByPlayer[player] or 0
@@ -205,6 +235,7 @@ Players.PlayerRemoving:Connect(function(player)
 	carriedByPlayer[player] = nil
 	baseSpeedByPlayer[player] = nil
 	lastPickupAtByPlayer[player] = nil
+	lastNoBaseNoticeAtByPlayer[player] = nil
 end)
 
 Players.PlayerAdded:Connect(function(player)
