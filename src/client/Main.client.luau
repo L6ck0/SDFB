@@ -128,6 +128,21 @@ listLayout.VerticalAlignment = Enum.VerticalAlignment.Top
 listLayout.Padding = UDim.new(0, 6)
 listLayout.Parent = scroll
 
+local function createCloseButton(parent)
+	local button = Instance.new("TextButton")
+	button.Name = "CloseButton"
+	button.Size = UDim2.fromOffset(34, 34)
+	button.Position = UDim2.new(1, -44, 0, 8)
+	button.BackgroundColor3 = Color3.fromRGB(60, 60, 70)
+	button.TextColor3 = Color3.fromRGB(255, 255, 255)
+	button.TextSize = 20
+	button.Font = Enum.Font.GothamBold
+	button.Text = "X"
+	button.AutoButtonColor = true
+	button.Parent = parent
+	return button
+end
+
 local function createPanel(name, titleText, bodyText)
 	local frame = Instance.new("Frame")
 	frame.Name = name
@@ -161,12 +176,15 @@ local function createPanel(name, titleText, bodyText)
 	bodyLabel.Text = bodyText
 	bodyLabel.Parent = frame
 
-	return frame
+	local closeButton = createCloseButton(frame)
+
+	return frame, closeButton
 end
 
-local shopFrame = createPanel("ShopFrame", "Robux Shop", "Placeholder: add gamepasses/dev products and purchase buttons here.")
-local rebirthFrame = createPanel("RebirthFrame", "Rebirth", "Placeholder: show rebirth requirement, multiplier reward, and confirm button.")
-local settingsFrame = createPanel("SettingsFrame", "Settings", "Placeholder: add toggles for music, SFX, and UI options.")
+local menuCloseButton = createCloseButton(menuFrame)
+local shopFrame, shopCloseButton = createPanel("ShopFrame", "Robux Shop", "Placeholder: add gamepasses/dev products and purchase buttons here.")
+local rebirthFrame, rebirthCloseButton = createPanel("RebirthFrame", "Rebirth", "Placeholder: show rebirth requirement, multiplier reward, and confirm button.")
+local settingsFrame, settingsCloseButton = createPanel("SettingsFrame", "Settings", "Placeholder: add toggles for music, SFX, and UI options.")
 
 local remotes = ReplicatedStorage:WaitForChild("Remotes")
 local deleteEvent = remotes:WaitForChild("DeleteBrainrot")
@@ -495,6 +513,27 @@ function setMenuVisible(visible)
 	end
 end
 
+local function closePanel(panelName)
+	if panelName == "base" then
+		if menuFrame.Visible then
+			setMenuVisible(false)
+		end
+		return
+	end
+
+	if panelName == "shop" then
+		shopFrame.Visible = false
+	elseif panelName == "rebirth" then
+		rebirthFrame.Visible = false
+	elseif panelName == "settings" then
+		settingsFrame.Visible = false
+	end
+
+	if activePanel == panelName then
+		activePanel = "none"
+	end
+end
+
 local function hideAllPanels()
 	menuFrame.Visible = false
 	shopFrame.Visible = false
@@ -503,6 +542,22 @@ local function hideAllPanels()
 	closeDeleteConfirm(false)
 	activePanel = "none"
 end
+
+menuCloseButton.MouseButton1Click:Connect(function()
+	closePanel("base")
+end)
+
+shopCloseButton.MouseButton1Click:Connect(function()
+	closePanel("shop")
+end)
+
+rebirthCloseButton.MouseButton1Click:Connect(function()
+	closePanel("rebirth")
+end)
+
+settingsCloseButton.MouseButton1Click:Connect(function()
+	closePanel("settings")
+end)
 
 menuButton.MouseButton1Click:Connect(function()
 	local open = activePanel ~= "base"
