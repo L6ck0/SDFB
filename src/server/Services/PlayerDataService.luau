@@ -12,7 +12,20 @@ local SAVE_INTERVAL_SECONDS = 180
 local MIN_SECONDS_BETWEEN_SAVES = 60
 local CASH_DIRTY_INTERVAL_SECONDS = 60
 local MAX_SAVE_RETRIES = 3
+local BUDGET_WAIT_TIMEOUT = 6
+local BUDGET_POLL_INTERVAL = 0.1
 local isShuttingDown = false
+
+local function waitForBudget(requestType)
+	local deadline = os.clock() + BUDGET_WAIT_TIMEOUT
+	repeat
+		if DataStoreService:GetRequestBudgetForRequestType(requestType) > 0 then
+			return true
+		end
+		task.wait(BUDGET_POLL_INTERVAL)
+	until os.clock() >= deadline
+	return false
+end
 
 local function emptyCounts()
 	local counts = {}
@@ -54,7 +67,15 @@ local function ensureLeaderstats(player)
 		cash.Parent = leaderstats
 	end
 
-	return rescued, roundRescued, cash
+	local incomePerSecondValue = leaderstats:FindFirstChild("IncomePerSecond")
+	if not incomePerSecondValue then
+		incomePerSecondValue = Instance.new("IntValue")
+		incomePerSecondValue.Name = "IncomePerSecond"
+		incomePerSecondValue.Value = 0
+		incomePerSecondValue.Parent = leaderstats
+	end
+
+	return rescued, roundRescued, cash, incomePerSecondValue
 end
 
 local function ensureBaseBrainrotsFolder(player)
@@ -106,7 +127,11 @@ local function getTotalOwnedCount(data)
 end
 
 local function syncIncomeValueObject(data)
-	data.runtimeStats.CashPerSecond.Value = computeIncomePerSecond(data.ownedCounts)
+	local income = computeIncomePerSecond(data.ownedCounts)
+	data.runtimeStats.CashPerSecond.Value = income
+	if data.leaderstats.incomePerSecond then
+		data.leaderstats.incomePerSecond.Value = math.floor(income + 0.5)
+	end
 end
 
 local function chooseBrainrotName(rarity)
@@ -144,6 +169,8 @@ local function createBrainrotEntry(data, rarity, brainrotName, incomePerSecond)
 		rarity = rarity,
 		brainrotName = brainrotName,
 		incomePerSecond = incomePerSecond,
+		bankedIncome = 0,
+		lastAccrualAt = os.clock(),
 	}
 
 	data.brainrots[id] = entry
@@ -168,7 +195,7 @@ local function tryAddOwnedBrainrot(data, rescueData)
 	return true
 end
 
-local function addLoadedBrainrotEntry(data, id, rarity, brainrotName, incomePerSecond)
+local function addLoadedBrainrotEntry(data, id, rarity, brainrotName, incomePerSecond, bankedIncome)
 	local safeRarity, safeName, safeIncome = resolveRescueData({
 		rarity = rarity,
 		brainrotName = brainrotName,
@@ -186,6 +213,8 @@ local function addLoadedBrainrotEntry(data, id, rarity, brainrotName, incomePerS
 		rarity = safeRarity,
 		brainrotName = safeName,
 		incomePerSecond = safeIncome,
+		bankedIncome = math.max(0, tonumber(bankedIncome) or 0),
+		lastAccrualAt = os.clock(),
 	}
 	data.ownedCounts[safeRarity] += 1
 
@@ -199,9 +228,15 @@ end
 
 local function loadPlayerData(player, data)
 	local key = ("player_%d"):format(player.UserId)
-	local ok, result = pcall(function()
-		return brainrotDataStore:GetAsync(key)
-	end)
+	local ok, result = false, nil
+	if waitForBudget(Enum.DataStoreRequestType.GetAsync) then
+		ok, result = pcall(function()
+			return brainrotDataStore:GetAsync(key)
+		end)
+	else
+		warn(("PlayerData load skipped for %s: budget timeout"):format(player.Name))
+		return
+	end
 	if not ok then
 		warn(("PlayerData load failed for %s: %s"):format(player.Name, tostring(result)))
 		return
@@ -222,7 +257,7 @@ local function loadPlayerData(player, data)
 	if type(result.brainrots) == "table" then
 		for _, item in ipairs(result.brainrots) do
 			if type(item) == "table" and item.id ~= nil and type(item.rarity) == "string" then
-				addLoadedBrainrotEntry(data, item.id, item.rarity, item.brainrotName, item.incomePerSecond)
+				addLoadedBrainrotEntry(data, item.id, item.rarity, item.brainrotName, item.incomePerSecond, item.bankedIncome)
 			end
 		end
 	end
@@ -236,6 +271,7 @@ local function serializeBrainrots(data)
 			rarity = entry.rarity,
 			brainrotName = entry.brainrotName,
 			incomePerSecond = entry.incomePerSecond,
+			bankedIncome = entry.bankedIncome or 0,
 		}
 	end
 	table.sort(list, function(a, b)
@@ -269,6 +305,10 @@ local function savePlayer(player)
 
 	local ok, err = false, nil
 	for attempt = 1, MAX_SAVE_RETRIES do
+		if not waitForBudget(Enum.DataStoreRequestType.SetIncrementAsync) then
+			err = "budget timeout"
+			break
+		end
 		ok, err = pcall(function()
 			brainrotDataStore:SetAsync(key, payload)
 		end)
@@ -306,6 +346,10 @@ local function forceSavePlayer(player)
 
 	local ok, err = false, nil
 	for attempt = 1, MAX_SAVE_RETRIES do
+		if not waitForBudget(Enum.DataStoreRequestType.SetIncrementAsync) then
+			err = "budget timeout"
+			break
+		end
 		ok, err = pcall(function()
 			brainrotDataStore:SetAsync(key, payload)
 		end)
@@ -327,20 +371,20 @@ end
 
 local function initPlayer(player)
 	player:SetAttribute("DataReady", false)
-	local rescuedValue, roundRescuedValue, cashValue = ensureLeaderstats(player)
+	local rescuedValue, roundRescuedValue, cashValue, incomeValue = ensureLeaderstats(player)
 	local baseBrainrotsFolder = ensureBaseBrainrotsFolder(player)
 	local runtimeStats = ensureRuntimeStats(player)
 
 	local data = {
 		brainrots = {},
 		ownedCounts = emptyCounts(),
-		pending = emptyCounts(),
 		nextBrainrotId = 1,
 		cash = 0,
 		leaderstats = {
 			rescued = rescuedValue,
 			roundRescued = roundRescuedValue,
 			cash = cashValue,
+			incomePerSecond = incomeValue,
 		},
 		baseBrainrotsFolder = baseBrainrotsFolder,
 		runtimeStats = runtimeStats,
@@ -410,9 +454,6 @@ end
 
 function PlayerDataService.CommitRoundRescues()
 	for _, data in pairs(dataByPlayer) do
-		for _, rarity in ipairs(Config.RarityOrder) do
-			data.pending[rarity] = 0
-		end
 		data.leaderstats.roundRescued.Value = 0
 	end
 end
@@ -464,6 +505,63 @@ function PlayerDataService.GetIncomePerSecond(player)
 		return 0
 	end
 	return computeIncomePerSecond(data.ownedCounts)
+end
+
+function PlayerDataService.AccumulateBrainrotIncome(player, brainrotId)
+	local data = getData(player)
+	if not data then
+		return 0
+	end
+	local entry = data.brainrots[tostring(brainrotId or "")]
+	if not entry or not entry.incomePerSecond then
+		return 0
+	end
+	local now = os.clock()
+	local last = entry.lastAccrualAt or now
+	local delta = math.max(0, now - last)
+	entry.lastAccrualAt = now
+	entry.bankedIncome = (entry.bankedIncome or 0) + (entry.incomePerSecond * delta)
+	data.isDirty = true
+	return entry.bankedIncome
+end
+
+function PlayerDataService.GetBrainrotBankedIncome(player, brainrotId)
+	local data = getData(player)
+	if not data then
+		return 0
+	end
+	local entry = data.brainrots[tostring(brainrotId or "")]
+	if not entry or not entry.incomePerSecond then
+		return 0
+	end
+	return entry.bankedIncome or 0
+end
+
+function PlayerDataService.CollectBrainrotIncome(player, brainrotId)
+	local data = getData(player)
+	if not data then
+		return 0
+	end
+	local entry = data.brainrots[tostring(brainrotId or "")]
+	if not entry or not entry.incomePerSecond then
+		return 0
+	end
+	local amount = entry.bankedIncome or 0
+	entry.bankedIncome = 0
+	entry.lastAccrualAt = os.clock()
+	data.isDirty = true
+	return amount
+end
+
+function PlayerDataService.ResetBrainrotAccrual(player)
+	local data = getData(player)
+	if not data then
+		return
+	end
+	local now = os.clock()
+	for _, entry in pairs(data.brainrots) do
+		entry.lastAccrualAt = now
+	end
 end
 
 function PlayerDataService.AddCashFromIncome(player, amount)

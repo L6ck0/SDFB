@@ -33,7 +33,8 @@ Important Studio setting for persistence:
 - Implemented disasters:
   - Rising Lava
   - Meteor Shower
-  - Storm Winds
+  - Tsunami
+- Rising Lava is controlled through `Config.DisasterSettings.RisingLava` (start height, max height, speed multiplier), so you can easily tune how high/fast the lava rises without editing scripts.
 
 ### Brainrot Interaction
 - Random rarity spawn (weighted).
@@ -56,6 +57,7 @@ Important Studio setting for persistence:
 - Claimed base becomes respawn location.
 - Base displays owned brainrots as world objects.
 - In-world delete prompt on base brainrots.
+- Each brainrot spawns a neon collect pad in front; pads bank that brainrot's income over time only while the base is loaded, and stepping on the pad (owner only) pays out everything banked with a short cooldown.
 
 ### UI / Menus
 - Top HUD: phase/time + active disaster.
@@ -65,8 +67,9 @@ Important Studio setting for persistence:
 - Base full warning message.
 
 ### Economy and Progression
-- Brainrots in base generate passive cash.
-- Leaderstats include rescued and cash-related values.
+- Passive income was removed; players earn cash by walking across their brainrot collect pads.
+- Banked income persists across sessions and only accrues while the base instance is active, so logging off freezes production until you return.
+- Leaderstats track rescued count, round rescues, cash, and current income-per-second for bragging rights.
 - Base capacity limit enforced.
 
 ### Persistence
@@ -112,7 +115,7 @@ Important Studio setting for persistence:
   - Remote event wiring for delete and confirm flow.
 
 - `EconomyService`
-  - Periodic passive cash payout.
+  - Guards against starting the economy loop twice (passive payouts now happen via base collect pads, not a background tick).
 
 ## 5. Code Architecture (Client)
 - `src/client/Main.client.luau`
@@ -134,6 +137,8 @@ Important values:
 - Rarity income values
 - Label max distances
 - Disaster weights
+- Disaster-specific tunables (e.g., `Config.DisasterSettings.RisingLava.PlatformHeight`)
+- Brainrot collect pad cooldown (`Config.BrainrotCollectCooldownSeconds`)
 
 ## 7. Replication Contracts
 ### ReplicatedStorage
@@ -167,3 +172,28 @@ If rebuilding from scratch:
 - Published server behavior is more representative than rapid Studio stop/start loops.
 - Keep DataStore writes conservative; do not save every second.
 
+## 10. Map Anchors Workflow
+Designers can lay out bases/rescue pads directly in Studio without editing scripts:
+
+- Create `Workspace.MapAnchors`.
+- Under it, add:
+  - `BasePlots`: place `Part` anchors where you want base pads. Orientation and position drive the generated pad. Optional attributes:
+    - `PlotName` (string) to override auto naming.
+    - `PadSizeX`, `PadSizeY`, `PadSizeZ` (numbers) to override the default footprint (defaults come from `Config.BasePlotSize`).
+- `RescueZones`: place `Part` anchors for rescue pads. Optional attributes:
+  - `ZoneName` (string) for display/debug naming.
+  - `ZoneSizeX`, `ZoneSizeZ` (numbers) to resize the pad footprint.
+- If you already built the final rescue geometry, just move the parts under `Workspace.RescueZones` and (optionally) set folder attribute `SkipAutoZones = true` to disable fallback pads entirely. The service automatically binds every part inside the folder and listens for new parts added later.
+- On server start, `BaseService` clears `Workspace.PlayerBases` and spawns pads at every anchor; `RescueService` does the same for `Workspace.RescueZones`.
+- Existing fallback positions are still used when no anchors exist.
+- Brainrot spawn markers stay customizable through `Workspace.BrainrotSpawnMarkers_Base` (add/remove parts freely; the service no longer seeds fallback markers, so place every spawn point manually).
+- Lobby spawn: place your own `LobbySpawn` part (any `BasePart`) in Workspace. BaseService reads its position +3 studs up for players without a base; if the part is missing it falls back to `(0, 3, 0)`.
+ - Intermission gates: drop any bridge-blocking parts under `Workspace.IntermissionGates`. The server toggles their collisions automatically each phase; they're solid during intermission and open when the round starts. Parts tagged this way also repel players who haven't claimed a base (they're teleported back to lobby) and meteors ignore them to prevent midair explosions.
+- Meteor spawn zones: to restrict Meteor Shower impacts to the disaster island, place flat parts in `Workspace.MeteorSpawnZones` **or** inside each disaster model’s `MeteorSpawnZones` folder. Meteors choose a random X/Z inside those parts and spawn at either the part’s `MeteorSpawnHeight` attribute or ~120 studs up.
+
+## 11. Maintenance Notes (March 1, 2026)
+- PlayerDataService now waits on the correct `Enum.DataStoreRequestType.SetIncrementAsync` budget before saving (this is the bucket Roblox charges for `SetAsync`), fixing a bug where we’d falsely assume we had write budget and risk throttling.
+- Removed the unused `pending` counters inside PlayerDataService; round cleanup now simply resets the `RoundRescued` leaderstat.
+- Deleted the dead `PlayerService` script (leaderstats are fully handled inside PlayerDataService) to reduce confusion.
+- Removed the unused `createSpawnMarker` helper from MapLoaderService—brainrot spawn parts should always be authored directly in Studio under `Workspace.BrainrotSpawnMarkers_Base` or each disaster’s folder.
+- EconomyService documentation now matches reality (no hidden passive tick; only the collect pads matter). 
