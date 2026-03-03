@@ -1,6 +1,6 @@
 local Config = {}
 
-Config.RoundDurationSeconds = 75
+Config.RoundDurationSeconds = 10
 Config.IntermissionSeconds = 3
 Config.BrainrotSpawnCount = 12
 Config.BrainrotSpawnRadius = 180
