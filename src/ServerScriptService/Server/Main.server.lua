@@ -1,0 +1,12 @@
+local services = script.Parent:WaitForChild("Services")
+local PlayerDataService = require(services:WaitForChild("PlayerDataService"))
+local BaseService = require(services:WaitForChild("BaseService"))
+local InventoryService = require(services:WaitForChild("InventoryService"))
+local EconomyService = require(services:WaitForChild("EconomyService"))
+local RoundService = require(services:WaitForChild("RoundService"))
+
+PlayerDataService.Init()
+BaseService.Init()
+InventoryService.Init()
+EconomyService.Start()
+RoundService.Start()
